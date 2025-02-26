@@ -1,1 +1,135 @@
+import arcpy
+import os
+
+
+def buffer_function(input_layer_path, distance, output_gdb):
+    # extract just the layer name from the full path
+    layer_name = os.path.basename(input_layer_path).split('.')[0]
+
+    # output layer path in the geodatabase
+    output_layer = os.path.join(output_gdb, f"{layer_name}_buffered")
+
+    # overwrite output to true
+    arcpy.env.overwriteOutput = True
+
+    # buffer analysis
+    arcpy.Buffer_analysis(input_layer_path, output_layer, f"{distance} Feet", "FULL", "ROUND", "ALL")
+
+    print(f"Buffered layer created: {output_layer}")
+    return output_layer
+
+def intersect_function(buffer_layers, output_gdb):
+    # ask user to name output layer
+    output_name = input("Enter a name for the intersection result layer: ")
+
+    # output path in the geodatabase
+    output_layer = os.path.join(output_gdb, output_name)
+
+    # overwrite output to true
+    arcpy.env.overwriteOutput = True
+
+    print("Performing intersection of buffer layers...")
+
+    # intersect analysis
+    arcpy.Intersect_analysis(buffer_layers, output_layer, "ALL")
+
+    print(f"Intersection layer created: {output_layer}")
+    return output_layer
+
+def spatial_join_function(address_layer, intersect_layer, output_gdb):
+    # ask user to name output layer
+    output_name = input("Enter a name for the spatial join result layer: ")
+
+    # output path in the geodatabase
+    output_layer = os.path.join(output_gdb, output_name)
+
+    # overwrite output to true
+    arcpy.env.overwriteOutput = True
+
+    print("Performing spatial join...")
+
+    # spatial join
+    arcpy.SpatialJoin_analysis(
+        target_features = address_layer,
+        join_features = intersect_layer,
+        out_feature_class = output_layer,
+        join_operation = "JOIN_ONE_TO_ONE",
+        join_type = "KEEP_COMMON",
+        match_option = "INTERSECT"
+    )
+
+    print(f"Spatial join layer created: {output_layer}")
+    return output_layer
+
+def main():
+    # set input_workspace where original shapefiles are stored
+    input_workspace = r"C:\Users\thoma\Desktop\GIS3005\Lab 1\data\shapefiles\allShapefiles"
+    arcpy.env.workspace = input_workspace
+
+    # layers to analyze
+    layers = ["Mosquito_Larval_Sites", "Wetlands", "Lakes_and_Reservoirs_Boulder_County", "OSMP_Properties"]
+    # path to the output geodatabase
+    output_gdb = r"C:\Users\thoma\Desktop\GIS3005\Lab 1\WestNileOutbreak\WestNileOutbreak.gdb"
+    # path to the ArcPro project
+    project_path = r"C:\Users\thoma\Desktop\GIS3005\Lab 1\WestNileOutbreak\WestNileOutbreak"
+    # path to the ArcPro aprx
+    aprx = r"C:\Users\thoma\Desktop\GIS3005\Lab 1\WestNileOutbreak\WestNileOutbreak.aprx"
+    # address layer path
+    address_layer = os.path.join(input_workspace, "Addresses")
+
+    # list to store buffer layer paths
+    buffered_layers = []
+
+    for layer in layers:
+        print(f"Layer: {layer}")
+
+        # ask user for buffer distance
+        distance = input("Please specify a buffer distance in feet (between 1000-5000): ")
+
+        # validate input
+        try:
+            distance = int(distance)
+            if distance < 1000 or distance > 5000:
+                print("Distance must be between 1000 and 5000 feet. Please try again.")
+                continue
+        except ValueError:
+            print("Invalid input. Please enter a numeric value.")
+            continue
+
+        # call the buffer function and store output path
+        buffered_layer = buffer_function(os.path.join(input_workspace, layer), distance, output_gdb)
+        buffered_layers.append(buffered_layer)
+
+    # after layers are buffered, perform intersection
+    intersect_layer = None
+    if len(buffered_layers) == 4:
+        print("\nAll layers have been buffered. Proceeding to intersection...")
+        intersect_layer = intersect_function(buffered_layers, output_gdb)
+    else:
+        print(f"\nWarning: Not all layers were buffered. Only {len(buffered_layers)} out of 4 were processed.")
+        proceed = input("Do you want to proceed with intersection anyway? (y/n): ")
+        if proceed.lower() == 'y':
+            intersect_layer = intersect_function(buffered_layers, output_gdb)
+        else:
+            print("Intersection cancelled.")
+
+    # if intersection was successful, perform spatial join
+    if intersect_layer:
+        print("\nProceeding to spatial join...")
+        joined_layer = spatial_join_function(address_layer, intersect_layer, output_gdb)
+
+        # add joined_layer to arc project
+        aprx_project = arcpy.mp.ArcGISProject(aprx)  # create ArcGISProject object
+        map_doc = aprx_project.listMaps()[0]  # get the first map
+        map_doc.addDataFromPath(joined_layer)  # add the joined layer
+
+        print("Saving Project")
+        aprx_project.save()  # save changes
+
+        address_count = int(arcpy.GetCount_management(joined_layer)[0])
+        print("Number of addresses within calculated WNV outbreak intersect zone: ", address_count)
+        print("Program Complete")
+
+if __name__ == "__main__":
+    main()
 
